@@ -1,4 +1,5 @@
-#!/usr/local/bin/Rscript
+# Causal effect of prenatal exposure to metal mixtures on neurodevelopmental
+# outcomes.
 
 # Load required libraries.
 suppressMessages(library(bkmr))
@@ -118,7 +119,6 @@ km_hCont_no_varsel <- bkmr::kmbayes(y = y, Z = Z, X = X,
                                     varsel = FALSE)
 save(km_hCont_no_varsel, file = "km_hCont_no_varsel.RData")
 
-################################################################################
 # Choose a model for result summary.
 X <- matrix(0, length(response), 1) # Model 1.
 X <- cate.matrix                    # Model 2.
@@ -204,8 +204,8 @@ bivariate.h.df %>% ggplot(aes(z1, est)) +
   ggtitle("f(z1 | quantiles of z2)") +
   ggtheme.config("", 25, 0)
 
-################################################################################
-# Set up data for GAM analysis.
+# Begin the GAM analysis.
+
 # Model 1: Put only exposures into the s function.
 gam_hZ_no_varsel <- gam(ccs_z ~ s(mn_ln_c, as_ln_c, pb_ln_c) + momage_c +
                           homescore_z + momIQ_z + age_c + momeducd + smokenv +
@@ -268,41 +268,6 @@ g6 <- plothFuncViaGam(gam_hCont_no_varsel, "pb_ln_c")
 grid.arrange(g1, g3, g5, g2, g4, g6, ncol = 3)
 grid.arrange(g1, g3, g5, ncol = 3)
 grid.arrange(g2, g4, g6, ncol = 3)
-
-
-# par(mfrow = c(1, 3))
-# vis.gam(gam_hAll_no_varsel, view = c("mn_ln_c", "as_ln_c"),
-#         plot.type = "contour", xlab = "Mn", ylab = "As", main = "h(x)")
-# vis.gam(gam_hAll_no_varsel, view = c("pb_ln_c", "mn_ln_c"),
-#         plot.type = "contour", xlab = "Pb", ylab = "Mn", main = "h(x)")
-# vis.gam(gam_hAll_no_varsel, view = c("as_ln_c", "pb_ln_c"),
-#         plot.type = "contour", xlab = "As", ylab = "Pb", main = "h(x)")
-
-# Test for arsenic and manganese interaction, we compare two specifications of
-# GAM employing the tensor product smoother, ti(): one that includes the
-# smoothed terms for the metals additively and the other that allows for a joint
-# smoothed effect of arsenic and manganese.
-# gam.nointeraction.fit <- gam(ccs_z ~ ti(mn_ln_c, k = 4) + ti(as_ln_c, k = 4) +
-#                               ti(pb_ln_c, k = 4) + gender + age_c + age_sq +
-#                               approxage + approxage_sq + momIQ_z + momIQ_sq +
-#                               homescore_z + homescore_sq + momeducd + smokenv +
-#                               protein, data = data)
-#
-# gam.interaction.fit <- gam(ccs_z ~ ti(mn_ln_c, k = 4) + ti(as_ln_c, k = 4) +
-#                              ti(as_ln_c, mn_ln_c, k = 4) + ti(pb_ln_c, k = 4) +
-#                              gender + age_c + age_sq + approxage +
-#                              approxage_sq + momIQ_z + momIQ_sq + homescore_z +
-#                              homescore_sq + momeducd + smokenv + protein,
-#                            data = data)
-#
-# anova(gam.nointeraction.fit, gam.interaction.fit, test = "Chisq")
-#
-# par(mfrow = c(2, 2))
-# vis.gam(gam.interaction.fit, view = c("mn_ln_c", "as_ln_c"),
-#         plot.type = "contour", xlab = "Mn", ylab = "As", main = "h(Mn,As)")
-# vis.gam(gam.nointeraction.fit, view = c("mn_ln_c", "as_ln_c"),
-#         plot.type = "contour", xlab = "Mn", ylab = "As", main = "h(Mn) + h(As)")
-# plot(gam.nointeraction.fit, ylim = c(-2, 1))
 
 
 
