@@ -1,5 +1,5 @@
-# Causal effect of prenatal exposure to metal mixtures on neurodevelopmental
-# outcomes.
+# This script aims to estimate the causal effect of prenatal exposure to metal
+# mixtures on neurodevelopmental outcomes using the BKMR and mgcv R packages.
 
 # Load required libraries.
 suppressMessages(library(bkmr))
@@ -96,6 +96,7 @@ control.params <- c(r.prior = r.prior.opts[i], lambda.jump = 1,
 starting.value <- list(r = 0.02)
 
 # Fit different specifications of Bayesian kernel machine regression models.
+
 # Model 1: Put all exposures and covariates into the h function, without any
 # variable selection.
 set.seed(500)
@@ -204,7 +205,7 @@ bivariate.h.df %>% ggplot(aes(z1, est)) +
   ggtitle("f(z1 | quantiles of z2)") +
   ggtheme.config("", 25, 0)
 
-# Begin the GAM analysis.
+# Fit different specifications of generalized additive mixed models.
 
 # Model 1: Put only exposures into the s function.
 gam_hZ_no_varsel <- gam(ccs_z ~ s(mn_ln_c, as_ln_c, pb_ln_c) + momage_c +
@@ -268,33 +269,3 @@ g6 <- plothFuncViaGam(gam_hCont_no_varsel, "pb_ln_c")
 grid.arrange(g1, g3, g5, g2, g4, g6, ncol = 3)
 grid.arrange(g1, g3, g5, ncol = 3)
 grid.arrange(g2, g4, g6, ncol = 3)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
