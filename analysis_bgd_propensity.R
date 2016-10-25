@@ -12,8 +12,10 @@ suppressMessages(library(heavy))
 suppressMessages(library(mgcv))
 suppressMessages(library(mvtnorm))
 
+# Set constant parameters.
 n.outcomes <- 3 # Number of neurodevelopment outcomes.
 kTruncateValue <- 0.05 # Value for truncating propensity scores.
+kDegreesOfFreedom <- 1e300 # Set it to large to be closer to normal.
 
 # Set configuration for themes (non-data components of the plot).
 ggtheme.config <- function(main, size, xt.angle){
@@ -33,42 +35,46 @@ ggtheme.config <- function(main, size, xt.angle){
 DATA.PATH <- stringr::str_c("/Users/cathylee/Documents/Harvard/Postdoc/",
                             "EarlySigns/earlyS.data/bgd_data.txt")
 data <- read.table(DATA.PATH, header = TRUE)
-bgd <- data %>%
-  dplyr::select(ccs_z, as_ln_c, mn_ln_c, pb_ln_c, momage_c, homescore_z,
-                momIQ_z, age_c, momeducd, smokenv, sex, protein, clinic) %>%
+data$age_sq <- data$age_c ^ 2
+bgd <- data %>% dplyr::select(ccs_z, as_ln_c, mn_ln_c, pb_ln_c, momage_c,
+                              homescore_z, momIQ_z, age_c, age_sq, momeducd,
+                              smokenv, sex, protein, clinic) %>%
   na.omit
 
-# Standardize exposure vectors.
-bgd$as_ln_z <- with(bgd, (as_ln_c - mean(as_ln_c)) / sd(as_ln_c))
-bgd$mn_ln_z <- with(bgd, (mn_ln_c - mean(mn_ln_c)) / sd(mn_ln_c))
-bgd$pb_ln_z <- with(bgd, (pb_ln_c - mean(pb_ln_c)) / sd(pb_ln_c))
-
-# Standardize continuous confounder vectors.
-bgd$momage_z <- with(bgd, (momage_c - mean(momage_c)) / sd(momage_c))
-bgd$age_z <- with(bgd, (age_c - mean(age_c)) / sd(age_c))
 bgd$momeducd <- factor(bgd$momeducd)
 bgd$smokenv <- factor(bgd$smokenv)
 bgd$sex <- factor(bgd$sex)
 bgd$protein <- factor(bgd$protein)
 bgd$clinic <- factor(bgd$clinic)
 
-# Finalize the analysis data.
-bgd <- dplyr::select(bgd, ccs_z, as_ln_z, mn_ln_z, pb_ln_z, momage_z,
-                     homescore_z, momIQ_z, age_z, momeducd, smokenv, sex,
-                     protein, clinic)
+# Standardize exposure and continuous confounder variables if neccessary.
+# bgd$as_ln_z <- with(bgd, (as_ln_c - mean(as_ln_c)) / sd(as_ln_c))
+# bgd$mn_ln_z <- with(bgd, (mn_ln_c - mean(mn_ln_c)) / sd(mn_ln_c))
+# bgd$pb_ln_z <- with(bgd, (pb_ln_c - mean(pb_ln_c)) / sd(pb_ln_c))
+# bgd$momage_z <- with(bgd, (momage_c - mean(momage_c)) / sd(momage_c))
+# bgd$age_z <- with(bgd, (age_c - mean(age_c)) / sd(age_c))
+
+# Finalize the analysis data. From here onwards, we use unstandardized exposure
+# and confounder variables for now.
+bgd <- dplyr::select(bgd, ccs_z, as_ln_c, mn_ln_c, pb_ln_c, momage_c,
+                     homescore_z, momIQ_z, age_c, age_sq, momeducd, smokenv,
+                     sex, protein, clinic)
 
 # Set up exposure matrices and formulaes for models.
-exposures <- cbind(bgd$as_ln_z, bgd$mn_ln_z, bgd$pb_ln_z)
-num.lm.formula <- as.formula("cbind(as_ln_z, mn_ln_z, pb_ln_z) ~ 1")
-cov.part <- paste(stringr::str_c("momage_z + homescore_z + momIQ_z + age_z +",
-                                 "momeducd + smokenv + sex + protein + clinic"))
-den.lm.formula <- as.formula(paste("cbind(as_ln_z, mn_ln_z, pb_ln_z) ~",
-                                   cov.part))
-num.gam.formula <- list(as_ln_z ~ 1, mn_ln_z ~ 1, pb_ln_z ~ 1)
-den.gam.formula <- list(as.formula(paste("as_ln_z ~", cov.part)),
-                        as.formula(paste("mn_ln_z ~", cov.part)),
-                        as.formula(paste("pb_ln_z ~", cov.part)))
+exposures <- cbind(bgd$as_ln_c, bgd$mn_ln_c, bgd$pb_ln_c)
 
+cov.part <- paste(stringr::str_c("momage_c + homescore_z + momIQ_z + age_c +",
+                                 "age_sq + momeducd + smokenv + sex +",
+                                 "protein + clinic"))
+num.lm.formula <- as.formula("cbind(as_ln_c, mn_ln_c, pb_ln_c) ~ 1")
+den.lm.formula <- as.formula(paste("cbind(as_ln_c, mn_ln_c, pb_ln_c) ~",
+                                   cov.part))
+num.gam.formula <- list(as_ln_c ~ 1, mn_ln_c ~ 1, pb_ln_c ~ 1)
+den.gam.formula <- list(as.formula(paste("as_ln_c ~", cov.part)),
+                        as.formula(paste("mn_ln_c ~", cov.part)),
+                        as.formula(paste("pb_ln_c ~", cov.part)))
+
+# Companion functions for use in the main functin ConstructStabilizedWeights().
 TruncateWeights <- function(x, trunc){
   low <- quantile(x, 0 + trunc) # trunc
   upp <- quantile(x, 1 - trunc) # 1 - trunc
@@ -93,9 +99,9 @@ ConstructStabilizedWeights <- function(method) {
     den.fitted <- lm(den.lm.formula, data = bgd)
   } else if (method == "hlm") {
     num.fitted <- heavyLm(num.lm.formula, data = bgd,
-                          family = Student(df = 1e300))
+                          family = Student(df = kDegreesOfFreedom))
     den.fitted <- heavyLm(den.lm.formula, data = bgd,
-                          family = Student(df = 1e300))
+                          family = Student(df = kDegreesOfFreedom))
   } else if (method == "gam") {
     num.fitted <- gam(num.gam.formula, family = mvn(d = n.outcomes), data = bgd)
     den.fitted <- gam(den.gam.formula, family = mvn(d = n.outcomes), data = bgd)
@@ -124,52 +130,58 @@ bgd$gam.weights <- ConstructStabilizedWeights("gam")$weights
 bgd$gam.trunc.weights <- ConstructStabilizedWeights("gam")$trunc.weights
 
 # Plot and compare the three stabailized weights.
+par(mfrow = c(1, 3))
+plot(density(bgd$lm.trunc.weights), lwd = 2)
+plot(density(bgd$hlm.trunc.weights), lwd = 2)
+plot(density(bgd$gam.trunc.weights), lwd = 2)
+
 par(mfrow = c(1, 2))
 plot(bgd$lm.trunc.weights, bgd$gam.trunc.weights)
 plot(bgd$lm.trunc.weights, bgd$hlm.trunc.weights)
 
 # Begin analysis via gam().
 Main <- function(weights) {
-  outcome.part <- "ccs_z ~ s(as_ln_z, mn_ln_z, pb_ln_z) +"
+  outcome.part <- "ccs_z ~ s(as_ln_c, mn_ln_c, pb_ln_c) +"
   gam.standard <- gam(as.formula(paste(outcome.part, cov.part)), data = bgd)
 
   bgd$gps <- weights
-  gam.regression <- gam(as.formula(paste(outcome.part, "s(gps, k = 3)")),
+  gam.regression <- gam(as.formula(paste(outcome.part, "s(gps, k = 4)")),
                         data = bgd)
 
   plothFuncViaGam <- function(gam.fit, method, exposure.var) {
-    is_Mn <- ifelse(exposure.var == "mn_ln_z", "y", "n")
+    is_Mn <- ifelse(exposure.var == "mn_ln_c", "y", "n")
     mn <- switch(is_Mn,
-                 y = seq(min(bgd$mn_ln_z), max(bgd$mn_ln_z), length = 100),
-                 n = mean(gam.fit$model$mn_ln_z))
+                 y = seq(min(bgd$mn_ln_c), max(bgd$mn_ln_c), length = 100),
+                 n = mean(gam.fit$model$mn_ln_c))
 
-    is_As <- ifelse(exposure.var == "as_ln_z", "y", "n")
+    is_As <- ifelse(exposure.var == "as_ln_c", "y", "n")
     as <- switch(is_As,
-                 y = seq(min(bgd$as_ln_z), max(bgd$as_ln_z), length = 100),
-                 n = mean(gam.fit$model$as_ln_z))
+                 y = seq(min(bgd$as_ln_c), max(bgd$as_ln_c), length = 100),
+                 n = mean(gam.fit$model$as_ln_c))
 
-    is_Pb <- ifelse(exposure.var == "pb_ln_z", "y", "n")
+    is_Pb <- ifelse(exposure.var == "pb_ln_c", "y", "n")
     pb <- switch(is_Pb,
-                 y = seq(min(bgd$pb_ln_z), max(bgd$pb_ln_z), length = 100),
-                 n = mean(gam.fit$model$pb_ln_z))
+                 y = seq(min(bgd$pb_ln_c), max(bgd$pb_ln_c), length = 100),
+                 n = mean(gam.fit$model$pb_ln_c))
 
     if (method == "standard") {
-      testdata <- data.frame(as_ln_z = as,
-                             mn_ln_z = mn,
-                             pb_ln_z = pb,
-                             momage_z = mean(gam.fit$model$momage_z),
+      testdata <- data.frame(as_ln_c = as,
+                             mn_ln_c = mn,
+                             pb_ln_c = pb,
+                             momage_c = mean(gam.fit$model$momage_c),
                              homescore_z = mean(gam.fit$model$homescore_z),
                              momIQ_z = mean(gam.fit$model$momIQ_z),
-                             age_z = mean(gam.fit$model$age_z),
+                             age_c = mean(gam.fit$model$age_c),
+                             age_sq = mean(gam.fit$model$age_sq),
                              momeducd = 1,
                              smokenv = 1,
                              sex = 1,
                              protein = 1,
                              clinic = 1)
     } else if (method == "regression") {
-      testdata <- data.frame(as_ln_z = as,
-                             mn_ln_z = mn,
-                             pb_ln_z = pb,
+      testdata <- data.frame(as_ln_c = as,
+                             mn_ln_c = mn,
+                             pb_ln_c = pb,
                              gps = mean(gam.fit$model$gps))
     }
 
@@ -180,17 +192,17 @@ Main <- function(weights) {
                       ymax = predicts$fit + 1.96 * predicts$se.fit),
                   fill = "gray80", size = 1, stat = "identity") +
       scale_x_continuous(limits = c(-2, 4)) +
-      scale_y_continuous(limits = c(-1, 1)) +
+      scale_y_continuous(limits = c(-2, 2)) +
       xlab(exposure.var) + ylab("estimate") +
       ggtheme.config("", 25, 0)
     return(g)
   }
 
-  g1 <- plothFuncViaGam(gam.standard,"standard", "as_ln_z")
-  g2 <- plothFuncViaGam(gam.regression, "regression", "as_ln_z")
-  g3 <- plothFuncViaGam(gam.standard, "standard", "mn_ln_z")
-  g4 <- plothFuncViaGam(gam.regression, "regression", "mn_ln_z")
-  g5 <- plothFuncViaGam(gam.standard, "standard", "pb_ln_z")
-  g6 <- plothFuncViaGam(gam.regression, "regression", "pb_ln_z")
+  g1 <- plothFuncViaGam(gam.standard,"standard", "as_ln_c")
+  g2 <- plothFuncViaGam(gam.regression, "regression", "as_ln_c")
+  g3 <- plothFuncViaGam(gam.standard, "standard", "mn_ln_c")
+  g4 <- plothFuncViaGam(gam.regression, "regression", "mn_ln_c")
+  g5 <- plothFuncViaGam(gam.standard, "standard", "pb_ln_c")
+  g6 <- plothFuncViaGam(gam.regression, "regression", "pb_ln_c")
   grid.arrange(g1, g3, g5, g2, g4, g6, ncol = 3)
 }
