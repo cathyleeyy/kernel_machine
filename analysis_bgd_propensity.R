@@ -5,15 +5,19 @@
 # multivariate normal additive model, mvn in gam().
 
 # Load required libraries.
+suppressMessages(library(bkmr))
 suppressMessages(library(dplyr))
 suppressMessages(library(ggplot2))
 suppressMessages(library(gridExtra))
 suppressMessages(library(heavy))
 suppressMessages(library(mgcv))
-suppressMessages(library(mvtnorm))
+suppressMessages(library(mixtools))
 
 # Set constant parameters.
+is.runGAM <- FALSE
+is.runBKMR <- TRUE
 n.outcomes <- 3 # Number of neurodevelopment outcomes.
+n.bkmr.iterations <- 100 # Number of iterations for bkmr(), should be 50000.
 kTruncateValue <- 0.05 # Value for truncating propensity scores.
 kDegreesOfFreedom <- 1e300 # Set it to large to be closer to normal.
 
@@ -139,14 +143,13 @@ par(mfrow = c(1, 2))
 plot(bgd$lm.trunc.weights, bgd$gam.trunc.weights)
 plot(bgd$lm.trunc.weights, bgd$hlm.trunc.weights)
 
-# Begin analysis via gam().
-Main <- function(weights) {
+if (isTRUE(is.runGAM)) {
+  # Begin analysis via gam().
+  bgd$gps <- bgd$lm.trunc.weights # Use multivariate linear regression.
+
   outcome.part <- "ccs_z ~ s(as_ln_c, mn_ln_c, pb_ln_c) +"
   gam.standard <- gam(as.formula(paste(outcome.part, cov.part)), data = bgd)
-
-  bgd$gps <- weights
-  gam.regression <- gam(as.formula(paste(outcome.part, "s(gps, k = 4)")),
-                        data = bgd)
+  gam.gps <- gam(as.formula(paste(outcome.part, "s(gps, k = 4)")), data = bgd)
 
   plothFuncViaGam <- function(gam.fit, method, exposure.var) {
     is_Mn <- ifelse(exposure.var == "mn_ln_c", "y", "n")
@@ -178,7 +181,7 @@ Main <- function(weights) {
                              sex = 1,
                              protein = 1,
                              clinic = 1)
-    } else if (method == "regression") {
+    } else if (method == "gps") {
       testdata <- data.frame(as_ln_c = as,
                              mn_ln_c = mn,
                              pb_ln_c = pb,
@@ -199,10 +202,110 @@ Main <- function(weights) {
   }
 
   g1 <- plothFuncViaGam(gam.standard,"standard", "as_ln_c")
-  g2 <- plothFuncViaGam(gam.regression, "regression", "as_ln_c")
+  g2 <- plothFuncViaGam(gps.gps, "gps", "as_ln_c")
   g3 <- plothFuncViaGam(gam.standard, "standard", "mn_ln_c")
-  g4 <- plothFuncViaGam(gam.regression, "regression", "mn_ln_c")
+  g4 <- plothFuncViaGam(gam.gps, "gps", "mn_ln_c")
   g5 <- plothFuncViaGam(gam.standard, "standard", "pb_ln_c")
-  g6 <- plothFuncViaGam(gam.regression, "regression", "pb_ln_c")
+  g6 <- plothFuncViaGam(gam.gps, "gps", "pb_ln_c")
   grid.arrange(g1, g3, g5, g2, g4, g6, ncol = 3)
+}
+
+if (isTRUE(is.runBKMR)) {
+  # Begin analysis via bkrm().
+
+  bgd$gps <- bgd$lm.trunc.weights # Use multivariate linear regression.
+
+  # Set up response vector, and exposure and covariate matrices.
+  response <- bgd$ccs_z
+  covariates <- model.matrix(as.formula(paste("~ -1 +", cov.part)), data = bgd)
+  gps.as.covariate <- bgd$gps
+
+  # Set BKMR priors and control parameters.
+  n.iterations <- n.bkmr.iterations
+  control.params <- c(r.prior = "invunif", lambda.jump = 1,
+                      list(r.params = c(list(r.a = 0, r.b = 1e2),
+                                        list(r.jump = 0.07, r.jump1 = 2,
+                                             r.jump2 = 0.1, r.muprop = 1))),
+                      list(a.sigsq = 0.01, b.sigsq = 0.01))
+  starting.value <- list(r = 0.02)
+
+  # Fit different specifications of Bayesian kernel machine regression models.
+  # Model 1: Adjusting confounders via the standard way.
+  set.seed(500)
+  y <- response
+  Z <- exposures
+  X <- covariates
+  fitted.km.standard <- bkmr::kmbayes(y = y, Z = Z, X = X,
+                                      iter = n.iterations,
+                                      control.params = control.params,
+                                      varsel = FALSE)
+  save(fitted.km.standard, file = "fitted.km.standard.RData")
+
+  # Model 2: Adjusting confounders via generalized propensity score regression.
+  set.seed(500)
+  y <- response
+  Z <- exposures
+  X <- gps.as.covariate
+  fitted.km.gps <- bkmr::kmbayes(y = y, Z = Z, X = X,
+                                 iter = n.iterations,
+                                 control.params = control.params,
+                                 varsel = FALSE)
+  save(fitted.km.gps, file = "fitted.km.gps.RData")
+
+  # Choose a model for result summary.
+  bkmr.fit <- get(load("fitted.km.standard.RData"))
+
+  filterData <- function(data.frame) {
+    return(subset(data.frame, variable == "as_ln_c" | variable == "mn_ln_c" |
+                    variable =="pb_ln_c"))
+  }
+
+  # Summarize MCMC results.
+  samples <- bkmr::ExtractSamps(bkmr.fit, sel = NULL)
+  par(mfrow = c(2, 2))
+  bkmr::TracePlot(bkmr.fit, par = "r")
+  bkmr::TracePlot(bkmr.fit, par = "lambda")
+  bkmr::TracePlot(bkmr.fit, par = "beta")
+  bkmr::TracePlot(bkmr.fit, par = "h")
+
+  # Summarize posterior inclusion probabilities.
+  pips <- bkmr::CalcPIPs(bkmr.fit)
+
+  # Compare estimated h function when all predictors are at a particular quantile
+  # to when all are at the 50th percentile.
+  overall.risk <- bkmr::OverallRiskSummaries(fit = bkmr.fit, y = y, Z = Z, X = X)
+  ggplot(overall.risk,
+         aes(quantile, est, ymin = est - 1.96 * sd, ymax = est + 1.96 * sd)) +
+    geom_pointrange() +
+    ggtheme.config("", 25, 0)
+
+  # Compute summaries of the risks associated with a change in a single variable
+  # in Z from a 75th to a 25th percentile, for the other variables in Z fixed to a
+  # specific level.
+  single.risk <- bkmr::SingVarRiskSummaries(fit = bkmr.fit, y = y, Z = Z, X = X)
+  ggplot(filterData(single.risk),
+         aes(variable, est, ymin = est - 1.96 * sd, ymax = est + 1.96 * sd,
+             col = q.fixed)) +
+    geom_pointrange(position = position_dodge(width = 0.75)) +
+    scale_y_continuous(limits = c(-0.6, 0.4)) +
+    coord_flip() +
+    ggtheme.config("", 25, 0)
+
+  # Compare the single-predictor health risks when all of the other predictors in
+  # Z are fixed to their 75th percentile to when all of the other predictors in Z
+  # are fixed to their 25th percentile.
+  interact.risk <- bkmr::SingVarIntSummaries(fit = bkmr.fit, y = y, Z = Z, X = X)
+  ggplot(filterData(interact.risk),
+         aes(variable, est, ymin = est - 1.96 * sd, ymax = est + 1.96 * sd)) +
+    geom_hline(yintercept = 0, col = "brown", lty = 2) +
+    geom_pointrange() +
+    ggtheme.config("", 25, 0)
+
+  # Plot univariate predictor-response function on a new grid of points.
+  univariate.h <- PredictorResponseUnivar(fit = bkmr.fit, y = y, Z = Z, X = X)
+  ggplot(filterData(univariate.h),
+         aes(z, est, ymin = est - 1.96 * se, ymax = est + 1.96 * se)) +
+    geom_smooth(stat = "identity") +
+    facet_wrap(~ variable) +
+    ggtheme.config("", 25, 0)
 }
